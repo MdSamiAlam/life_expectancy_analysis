@@ -165,3 +165,69 @@ corr_with_le = corr_matrix["Life expectancy"].drop("Life expectancy")
 
 print("\nTop Correlations:\n")
 print(corr_with_le.sort_values(ascending=False).round(3))
+
+# =============================================================================
+# SECTION 3 — LINEAR REGRESSION
+# =============================================================================
+
+# Objective 1:
+# Analyse the impact of Schooling on Life Expectancy using linear regression
+
+# Objective 2:
+# Analyse the impact of GDP on Life Expectancy using linear regression
+# (log transformation applied due to skewness)
+
+def regression_model(x_col, display_name=None):
+    display_name = display_name or x_col
+    
+    data = df[[x_col, "Life expectancy"]].dropna()
+    
+    X = data[[x_col]].values
+    y = data["Life expectancy"].values
+    
+    model = LinearRegression()
+    model.fit(X, y)
+    y_pred = model.predict(X)
+    
+    r2 = r2_score(y, y_pred)
+    rmse = np.sqrt(mean_squared_error(y, y_pred))
+    
+    print(f"\n{display_name} → Life Expectancy")
+    print("-"*40)
+    print("Slope:", round(model.coef_[0],4))
+    print("Intercept:", round(model.intercept_,4))
+    print("R²:", round(r2,4))
+    print("RMSE:", round(rmse,4))
+    
+    # Sort for proper line
+    x_sorted = np.sort(X, axis=0)
+    
+    plt.figure(figsize=(7,5))
+    plt.scatter(X, y, alpha=0.3)
+    plt.plot(x_sorted, model.predict(x_sorted), color="red")
+    plt.title(f"{display_name} vs Life Expectancy")
+    plt.xlabel(display_name)
+    plt.ylabel("Life Expectancy")
+    plt.tight_layout()
+    plt.show()
+    
+    return model.coef_[0]
+
+
+# 🔹 Model 1 — Schooling
+s1 = regression_model("Schooling", "Schooling")
+print(f"➡ 1 year increase in schooling → {s1:.2f} years increase in life expectancy")
+
+
+# 🔹 Model 2 — GDP (FIXED using log)
+
+# Ensure no zero or negative values (safety)
+df = df[df["GDP"] > 0]
+
+# Log transform
+df["log_GDP"] = np.log1p(df["GDP"])
+
+s2 = regression_model("log_GDP", "Log(GDP)")
+print(f"➡ Log(GDP) increase → {s2:.2f} increase in life expectancy")
+
+print("\nNote: GDP was skewed, so log transformation was applied for better model fit.")
