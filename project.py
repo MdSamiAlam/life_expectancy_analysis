@@ -167,6 +167,57 @@ print("\nTop Correlations:\n")
 print(corr_with_le.sort_values(ascending=False).round(3))
 
 # =============================================================================
+# SECTION 2 — DATA VISUALISATIONS
+# =============================================================================
+
+# Objective 3:
+# Visualise the relationship between Adult Mortality rate and Life Expectancy
+# using a scatter plot to observe direction and strength.
+
+# Scatter Plot with regression line
+plt.figure(figsize=(8,5))
+sns.regplot(data=df, x="Adult Mortality", y="Life expectancy",
+            scatter_kws={"alpha":0.4},
+            line_kws={"color":"red"})
+plt.title("Adult Mortality vs Life Expectancy")
+plt.xlabel("Adult Mortality")
+plt.ylabel("Life Expectancy")
+plt.tight_layout()
+plt.show()
+
+print("➡ Strong negative relationship observed")
+
+
+# -----------------------------------------------------------------------------
+
+# Objective 4:
+# Compare the distribution of Life Expectancy between Developed and
+# Developing countries using a box plot.
+
+# Boxplot
+plt.figure(figsize=(7,5))
+sns.boxplot(data=df, x="Status", y="Life expectancy")
+plt.title("Life Expectancy by Country Status")
+plt.tight_layout()
+plt.show()
+
+print("➡ Developed countries show higher life expectancy")
+
+
+# -----------------------------------------------------------------------------
+
+# Objective 5:
+# Identify important health and economic indicators that correlate
+# with Life Expectancy using a correlation heatmap.
+
+# Heatmap (selected features)
+cols = ["Life expectancy","Schooling","GDP","Adult Mortality","HIV/AIDS"]
+plt.figure(figsize=(8,6))
+sns.heatmap(df[cols].corr(), annot=True, cmap="coolwarm", fmt=".2f")
+plt.title("Correlation Heatmap (Key Features)")
+plt.tight_layout()
+plt.show()
+# =============================================================================
 # SECTION 3 — LINEAR REGRESSION
 # =============================================================================
 
