@@ -24,22 +24,29 @@ print("Dataset loaded:", df.shape, "\n")
 
 # Project Objectives
 objectives = """
-Objective 1 (Linear Regression):
-Analyse the impact of Schooling on Life Expectancy.
-X = Schooling   |   Y = Life expectancy
+  Objective 1 (Linear Regression):
+    Analyse the impact of Schooling (years of education) on
+    Life Expectancy across countries using simple linear regression.
+    X = Schooling   |   Y = Life expectancy
 
-Objective 2 (Linear Regression):
-Examine GDP vs Life Expectancy.
-X = GDP   |   Y = Life expectancy
+  Objective 2 (Linear Regression):
+    Examine the impact of Adult Mortality on Life Expectancy
+    using simple linear regression.
+    X = Adult Mortality   |   Y = Life expectancy
 
-Objective 3 (Visualisation - Scatter Plot):
-Adult Mortality vs Life Expectancy.
+  Objective 3 (Visualisation - Scatter Plot):
+    Visualise the relationship between Adult Mortality rate and
+    Life Expectancy to observe the direction and strength of
+    their association.
 
-Objective 4 (Visualisation - Box Plot):
-Life Expectancy by country status.
+  Objective 4 (Visualisation - Bar Plot):
+    Compare the average Life Expectancy between
+    Developed and Developing countries using a bar plot.
 
-Objective 5 (Visualisation - Heatmap):
-Correlation between numerical features.
+  Objective 5 (Visualisation - Heatmap):
+    Identify which numerical health and economic indicators
+    correlate most strongly with Life Expectancy using a
+    correlation heatmap.
 """
 print(objectives)
 
@@ -183,24 +190,24 @@ plt.show()
 
 print("➡ Strong negative relationship observed")
 
-
-
-
 # Objective 4:
-# Compare the distribution of Life Expectancy between Developed and
-# Developing countries using a box plot.
+# compare the average Life Expectancy between
+# Developed and Developing countries using a bar plot.
 
-# Boxplot
+# Barplot
 plt.figure(figsize=(7,5))
-sns.boxplot(data=df, x="Status", y="Life expectancy")
-plt.title("Life Expectancy by Country Status")
+sns.barplot(
+    data=df,
+    x="Status",
+    y="Life expectancy",
+    estimator=np.mean,
+    errorbar=None,
+    width=0.5
+)
+
+plt.title("Average Life Expectancy by Country Status")
 plt.tight_layout()
 plt.show()
-
-print("➡ Developed countries show higher life expectancy")
-
-
-
 
 # Objective 5:
 # Identify important health and economic indicators that correlate
@@ -216,13 +223,12 @@ plt.show()
 
 # SECTION 3 — LINEAR REGRESSION
 
-
 # Objective 1:
 # Analyse the impact of Schooling on Life Expectancy using linear regression
 
 # Objective 2:
-# Analyse the impact of GDP on Life Expectancy using linear regression
-# (log transformation applied due to skewness)
+# Examine the impact of Adult Mortality on Life Expectancy
+# using simple linear regression.
 
 def regression_model(x_col, display_name=None):
     display_name = display_name or x_col
@@ -241,17 +247,18 @@ def regression_model(x_col, display_name=None):
     
     print(f"\n{display_name} → Life Expectancy")
     print("-"*40)
-    print("Slope:", round(model.coef_[0],4))
-    print("Intercept:", round(model.intercept_,4))
-    print("R²:", round(r2,4))
-    print("RMSE:", round(rmse,4))
+    print("Slope:", round(model.coef_[0], 4))
+    print("Intercept:", round(model.intercept_, 4))
+    print("R²:", round(r2, 4))
+    print("RMSE:", round(rmse, 4))
     
-    # Sort for proper line
+    # Regression plot
     x_sorted = np.sort(X, axis=0)
     
     plt.figure(figsize=(7,5))
     plt.scatter(X, y, alpha=0.3)
     plt.plot(x_sorted, model.predict(x_sorted), color="red")
+    
     plt.title(f"{display_name} vs Life Expectancy")
     plt.xlabel(display_name)
     plt.ylabel("Life Expectancy")
@@ -266,18 +273,10 @@ s1 = regression_model("Schooling", "Schooling")
 print(f"➡ 1 year increase in schooling → {s1:.2f} years increase in life expectancy")
 
 
-# 🔹 Model 2 — GDP (FIXED using log)
+# 🔹 Model 2 — Adult Mortality
+s2 = regression_model("Adult Mortality", "Adult Mortality")
+print(f"➡ Increase in adult mortality → {s2:.2f} decrease in life expectancy")
 
-# Ensure no zero or negative values (safety)
-df = df[df["GDP"] > 0]
-
-# Log transform
-df["log_GDP"] = np.log1p(df["GDP"])
-
-s2 = regression_model("log_GDP", "Log(GDP)")
-print(f"➡ Log(GDP) increase → {s2:.2f} increase in life expectancy")
-
-print("\nNote: GDP was skewed, so log transformation was applied for better model fit.")
 
 # Hypothesis test
 
