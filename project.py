@@ -174,21 +174,21 @@ print(corr_with_le.sort_values(ascending=False).round(3))
 
 
 # Objective 3:
-# Visualise the relationship between Adult Mortality rate and Life Expectancy
-# using a scatter plot to observe direction and strength.
+# Analyse how Life Expectancy varies across GDP groups
 
-# Scatter Plot with regression line
+df["GDP_Group"] = pd.qcut(df["GDP"], q=5)
+grouped = df.groupby("GDP_Group")["Life expectancy"].mean()
+
 plt.figure(figsize=(8,5))
-sns.regplot(data=df, x="Adult Mortality", y="Life expectancy",
-            scatter_kws={"alpha":0.4},
-            line_kws={"color":"red"})
-plt.title("Adult Mortality vs Life Expectancy")
-plt.xlabel("Adult Mortality")
-plt.ylabel("Life Expectancy")
+grouped.plot(kind="bar")
+plt.title("Average Life Expectancy by GDP Groups")
+plt.xlabel("GDP Groups")
+plt.ylabel("Average Life Expectancy")
+plt.xticks(rotation=45)
 plt.tight_layout()
 plt.show()
 
-print("➡ Strong negative relationship observed")
+print("➡ Life expectancy increases with GDP groups")
 
 # Objective 4:
 # compare the average Life Expectancy between
