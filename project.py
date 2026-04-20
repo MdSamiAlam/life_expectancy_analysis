@@ -56,16 +56,12 @@ df.info()
 print("\nSummary Statistics\n")
 print(df.describe().round(2))
 
-# ─────────────────────────────────────────────
 # Missing Values
-# ─────────────────────────────────────────────
+
 print("\nMissing Values per Column\n")
 print(df.isnull().sum())
 
-
-# ─────────────────────────────────────────────
 # Handling Missing Values
-# ─────────────────────────────────────────────
 
 # LOW missing → mean
 low_cols = ["Life expectancy","Adult Mortality","BMI","Polio","Diphtheria"]
@@ -88,9 +84,9 @@ print("\nMissing Values after handling\n")
 print(df.isnull().sum())
 
 
-# ─────────────────────────────────────────────
+
 # Normality Check
-# ─────────────────────────────────────────────
+
 
 # Histogram
 plt.figure()
@@ -107,9 +103,9 @@ plt.show()
 print("\nObservation: Data is negatively skewed (not normal)")
 
 
-# ─────────────────────────────────────────────
+
 # Outlier Detection (IQR)
-# ─────────────────────────────────────────────
+
 print("\nHandling Outliers using IQR Method\n")
 
 Q1 = df["Life expectancy"].quantile(0.25)
@@ -123,9 +119,9 @@ print("Lower Bound:", round(lower_bound,2))
 print("Upper Bound:", round(upper_bound,2))
 
 
-# ─────────────────────────────────────────────
+
 # Outlier Treatment (Capping)
-# ─────────────────────────────────────────────
+
 df["Life expectancy"] = np.where(
     df["Life expectancy"] < lower_bound,
     lower_bound,
@@ -149,9 +145,9 @@ plt.title("Boxplot after Outlier Treatment")
 plt.show()
 
 
-# ─────────────────────────────────────────────
+
 # Correlation Analysis
-# ─────────────────────────────────────────────
+
 print("\n Correlation with Life Expectancy\n")
 
 num_df = df.select_dtypes(include=np.number)
@@ -166,9 +162,9 @@ corr_with_le = corr_matrix["Life expectancy"].drop("Life expectancy")
 print("\nTop Correlations:\n")
 print(corr_with_le.sort_values(ascending=False).round(3))
 
-# =============================================================================
+
 # SECTION 2 — DATA VISUALISATIONS
-# =============================================================================
+
 
 # Objective 3:
 # Visualise the relationship between Adult Mortality rate and Life Expectancy
@@ -188,7 +184,7 @@ plt.show()
 print("➡ Strong negative relationship observed")
 
 
-# -----------------------------------------------------------------------------
+
 
 # Objective 4:
 # Compare the distribution of Life Expectancy between Developed and
@@ -204,7 +200,7 @@ plt.show()
 print("➡ Developed countries show higher life expectancy")
 
 
-# -----------------------------------------------------------------------------
+
 
 # Objective 5:
 # Identify important health and economic indicators that correlate
@@ -217,9 +213,9 @@ sns.heatmap(df[cols].corr(), annot=True, cmap="coolwarm", fmt=".2f")
 plt.title("Correlation Heatmap (Key Features)")
 plt.tight_layout()
 plt.show()
-# =============================================================================
+
 # SECTION 3 — LINEAR REGRESSION
-# =============================================================================
+
 
 # Objective 1:
 # Analyse the impact of Schooling on Life Expectancy using linear regression
@@ -282,3 +278,47 @@ s2 = regression_model("log_GDP", "Log(GDP)")
 print(f"➡ Log(GDP) increase → {s2:.2f} increase in life expectancy")
 
 print("\nNote: GDP was skewed, so log transformation was applied for better model fit.")
+
+# Hypothesis test
+
+print("\n" + "="*50)
+print("SECTION 4 — HYPOTHESIS TEST")
+print("="*50)
+
+developed = df[df["Status"]=="Developed"]["Life expectancy"]
+developing = df[df["Status"]=="Developing"]["Life expectancy"]
+
+t_stat, p_val = stats.ttest_ind(developed, developing,
+                                equal_var=False,
+                                alternative="greater")
+
+print("Mean Developed:", round(developed.mean(),2))
+print("Mean Developing:", round(developing.mean(),2))
+print("T-stat:", round(t_stat,4))
+print("P-value:", p_val)
+
+if p_val < 0.05:
+    print(" Reject H0 → Developed countries have higher life expectancy")
+else:
+    print("❌ Fail to reject H0")
+
+# Visualization for Hypothesis Test
+
+means = [developed.mean(), developing.mean()]
+labels = ["Developed", "Developing"]
+
+bars = plt.bar(labels, means, width=0.4) 
+
+# Add mean values on top
+for bar, val in zip(bars, means):
+    plt.text(bar.get_x() + bar.get_width()/2,
+             bar.get_height() + 0.5,
+             f"{val:.1f}",
+             ha="center")
+
+plt.title("Life Expectancy Comparison")
+plt.ylabel("Life Expectancy")
+
+plt.tight_layout()
+plt.savefig("hypothesis_ttest_comparison.png")
+plt.show()
