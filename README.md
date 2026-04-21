@@ -136,38 +136,50 @@ It shows that **economic development improves life expectancy**, but is not the 
 
 ---
 
-### 🔹 Bar Plot — Developed vs Developing Countries
+### 🔹 Box Plot — Life Expectancy by Country Status
 
-![Bar Plot](images/barplot_status.png)
+![Box Plot](images/boxplot_status.png)
 
 ### 📌 What the Plot Shows
 
-- Compares the **average life expectancy** between developed and developing countries
+- Compares the **distribution of life expectancy** between developed and developing countries  
+- Displays key statistics:
+  - Median (central value)  
+  - Interquartile range (spread)  
+  - Outliers  
 
 ---
 
 ### 📌 Detailed Analysis
 
-The plot highlights a **significant gap in life expectancy** between developed and developing nations. Developed countries show higher average values, indicating stronger healthcare systems, better education, improved sanitation, and higher standards of living.
+The boxplot reveals a clear difference in both the **central tendency and distribution** of life expectancy between developed and developing countries.
 
-In contrast, developing countries display lower averages and more variability, reflecting inconsistent access to healthcare and economic instability.
+Developed countries show:
+- A **higher median life expectancy**, indicating overall better health outcomes  
+- A relatively **narrow spread**, suggesting consistency and stability across countries  
 
-This difference is not just visual but also reflects structural inequalities in global health systems.
+In contrast, developing countries show:
+- A **lower median**, reflecting reduced average lifespan  
+- A **wider spread**, indicating greater variability and inequality  
+- Presence of more extreme values (lower outliers), representing countries with significantly poor health conditions  
+
+This visualization goes beyond averages and highlights the **inequality and dispersion** within each group.
 
 ---
 
 ### 🎯 Objective Connection
 
 This directly satisfies the objective:
-> *Compare Life Expectancy between Developed and Developing countries*
 
-It provides clear evidence that **development status plays a crucial role in determining population health outcomes**.
+> Compare Life Expectancy between Developed and Developing countries  
+
+The boxplot provides a deeper comparison by showing not just differences in averages, but also **variability and distribution patterns**.
 
 ---
 
 ### 🎯 Insight
 
-> Development level is one of the strongest real-world indicators of life expectancy due to combined socio-economic advantages.
+> Developed countries not only have higher life expectancy but also more stable and consistent outcomes, while developing countries experience greater inequality and variability in population health.
 
 ---
 
