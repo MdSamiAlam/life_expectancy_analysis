@@ -34,12 +34,11 @@ objectives = """
     using simple linear regression.
     X = Adult Mortality   |   Y = Life expectancy
 
-  Objective 3 (Visualisation - Scatter Plot):
-    Visualise the relationship between Adult Mortality rate and
-    Life Expectancy to observe the direction and strength of
-    their association.
+  Objective 3 (Visualisation - Bar Plot):
+    Analyse how Life Expectancy varies across different GDP groups
+    to understand the economic influence on health outcomes.
 
-  Objective 4 (Visualisation - Bar Plot):
+  Objective 4 (Visualisation - Box Plot):
     Compare the average Life Expectancy between
     Developed and Developing countries using a bar plot.
 
@@ -48,7 +47,7 @@ objectives = """
     correlate most strongly with Life Expectancy using a
     correlation heatmap.
 """
-print(objectives)
+print(objectives
 
 # BASIC EDA
 
@@ -192,32 +191,55 @@ print("➡ Life expectancy increases with GDP groups")
 
 # Objective 4:
 # compare the average Life Expectancy between
-# Developed and Developing countries using a bar plot.
+# Developed and Developing countries using a boxplot.
 
-# Barplot
+# Boxplot
 plt.figure(figsize=(7,5))
-sns.barplot(
+
+sns.boxplot(
     data=df,
     x="Status",
     y="Life expectancy",
-    estimator=np.mean,
-    errorbar=None,
+    palette=["#e74c3c", "#2ecc71"],   # Developed = green, Developing = red
     width=0.5
 )
 
-plt.title("Average Life Expectancy by Country Status")
+plt.title("Life Expectancy Distribution by Country Status")
+plt.xlabel("Country Status")
+plt.ylabel("Life Expectancy")
+
 plt.tight_layout()
 plt.show()
+
+print("➡ Developed countries show higher median life expectancy")
+print("➡ Developing countries show more variability and lower values")
 
 # Objective 5:
 # Identify important health and economic indicators that correlate
 # with Life Expectancy using a correlation heatmap.
 
 # Heatmap (selected features)
-cols = ["Life expectancy","Schooling","GDP","Adult Mortality","HIV/AIDS"]
-plt.figure(figsize=(8,6))
-sns.heatmap(df[cols].corr(), annot=True, cmap="coolwarm", fmt=".2f")
-plt.title("Correlation Heatmap (Key Features)")
+cnum_df = df.select_dtypes(include=np.number)
+
+plt.figure(figsize=(14,10))
+
+sns.heatmap(
+    num_df.corr(),
+    cmap="coolwarm",
+    center=0,
+    vmin=-1,
+    vmax=1,
+    annot=True,                  
+    fmt=".2f",
+    annot_kws={"size": 6},         
+    linewidths=0.5,
+    cbar=True
+)
+
+plt.title("Correlation Heatmap (All Numerical Features)")
+plt.xticks(rotation=45, ha="right", fontsize=8)
+plt.yticks(rotation=0, fontsize=8)
+
 plt.tight_layout()
 plt.show()
 
