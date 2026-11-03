@@ -1,513 +1,907 @@
-# =============================================================================
-#  Life Expectancy Analysis Dashboard
-#  Streamlit version of the original analysis script.
-#  All calculations, styles, and visualisation code are identical
-#  to the original — only the output layer is changed (st.* instead of print/show).
-#
-#  HOW TO RUN:
-#    1. Place this file in the same folder as "Life Expectancy Data.csv"
-#    2. pip install streamlit pandas numpy matplotlib seaborn scikit-learn scipy
-#    3. streamlit run app.py
-# =============================================================================
+# ============================================================
+# Life Expectancy Analysis & Machine Learning Dashboard
+# ============================================================
 
-import warnings
-warnings.filterwarnings("ignore")
+import io
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import streamlit as st
-from scipy import stats
+
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score, mean_squared_error
 
-# ── Global style (exactly as in original) ────────────────────────────────────
-sns.set_theme(style="whitegrid", palette="muted")
-plt.rcParams["figure.dpi"] = 120
 
-
-# =============================================================================
-#  DATA LOADING & CLEANING  — cached so it only runs once
-# =============================================================================
-
-@st.cache_data
-def load_and_clean():
-    df = pd.read_csv("Life Expectancy Data.csv")
-    df.columns = df.columns.str.strip()
-
-    # LOW missing → mean
-    low_cols = ["Life expectancy", "Adult Mortality", "BMI", "Polio", "Diphtheria"]
-    for col in low_cols:
-        df[col] = df[col].fillna(df[col].mean())
-
-    # MEDIUM missing → group mean
-    medium_cols = ["Alcohol", "Total expenditure", "Schooling",
-                   "Income composition of resources"]
-    for col in medium_cols:
-        df[col] = df.groupby("Status")[col].transform(
-            lambda x: x.fillna(x.mean())
-        )
-
-    # HIGH missing → drop
-    df.drop(columns=["Population"], inplace=True)
-
-    # Remaining important columns → mean
-    df["GDP"]         = df["GDP"].fillna(df["GDP"].mean())
-    df["Hepatitis B"] = df["Hepatitis B"].fillna(df["Hepatitis B"].mean())
-
-    # Outlier capping via IQR
-    Q1  = df["Life expectancy"].quantile(0.25)
-    Q3  = df["Life expectancy"].quantile(0.75)
-    IQR = Q3 - Q1
-    lower_bound = Q1 - 1.5 * IQR
-    upper_bound = Q3 + 1.5 * IQR
-
-    df["Life expectancy"] = np.where(
-        df["Life expectancy"] < lower_bound, lower_bound, df["Life expectancy"]
-    )
-    df["Life expectancy"] = np.where(
-        df["Life expectancy"] > upper_bound, upper_bound, df["Life expectancy"]
-    )
-
-    # GDP groups (used in bar plot section)
-    df["GDP_Group"] = pd.qcut(
-        df["GDP"], q=5,
-        labels=["Very Low", "Low", "Medium", "High", "Very High"]
-    )
-
-    return df, lower_bound, upper_bound
-
-
-# =============================================================================
-#  PAGE CONFIG
-# =============================================================================
+# ------------------------------------------------------------
+# PAGE CONFIGURATION AND STYLE
+# ------------------------------------------------------------
 
 st.set_page_config(
     page_title="Life Expectancy Analysis Dashboard",
     page_icon="🌍",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-st.title("🌍 Life Expectancy Analysis Dashboard")
-st.markdown(
-    "**Dataset:** WHO Life Expectancy (2000–2015) &nbsp;|&nbsp; "
-    "**Source:** [Kaggle – kumarajarshi]"
-    "(https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who) "
-    "&nbsp;|&nbsp; **Rows:** 2,938 &nbsp;|&nbsp; **Columns:** 22"
-)
-st.markdown("---")
+sns.set_theme(style="whitegrid", palette="muted")
+plt.rcParams["figure.dpi"] = 120
 
-# ── Load data ────────────────────────────────────────────────────────────────
-try:
-    df, lower_bound, upper_bound = load_and_clean()
-except FileNotFoundError:
+BASE_DIR = Path(__file__).resolve().parent
+DATA_FILE = BASE_DIR / "Life Expectancy Data.csv"
+
+EXPERIMENT_FILE = BASE_DIR / "ml_experiment_results.csv"
+CV_FILE = BASE_DIR / "ml_cross_validation_results.csv"
+FUTURE_FILE = BASE_DIR / "future_year_results.csv"
+TREE_IMAGE = BASE_DIR / "decision_tree_visualization.png"
+
+TARGET = "Life expectancy"
+CLASS_LABELS = ["Low", "Medium", "High"]
+
+
+# ------------------------------------------------------------
+# DATA LOADING AND CLEANING — MATCHES CURRENT data.py
+# ------------------------------------------------------------
+
+@st.cache_data
+def load_data(file_path, modified_time):
+    data = pd.read_csv(file_path)
+    data.columns = data.columns.str.strip()
+
+    original_shape = data.shape
+    duplicate_count = int(data.duplicated().sum())
+
+    # Same initial cleaning as data.py
+    data = data.drop_duplicates().copy()
+    data = data.dropna(subset=[TARGET]).copy()
+
+    # Same EDA missing-value treatment as data.py
+    eda_data = data.copy()
+
+    for col in eda_data.select_dtypes(include=np.number).columns:
+        eda_data[col] = eda_data[col].fillna(eda_data[col].median())
+
+    for col in eda_data.select_dtypes(exclude=np.number).columns:
+        if eda_data[col].notna().any():
+            modes = eda_data[col].mode()
+            if not modes.empty:
+                eda_data[col] = eda_data[col].fillna(modes[0])
+
+    return data, eda_data, original_shape, duplicate_count
+
+
+def load_optional_csv(path):
+    if path.exists():
+        try:
+            return pd.read_csv(path)
+        except Exception as exc:
+            st.warning(f"Could not read {path.name}: {exc}")
+    return pd.DataFrame()
+
+
+def show_figure(fig):
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+if not DATA_FILE.exists():
     st.error(
-        "**`Life Expectancy Data.csv` not found.**  \n"
-        "Place the CSV in the **same folder** as `app.py` and restart."
+        "`Life Expectancy Data.csv` was not found. "
+        "Place it in the same folder as `app.py`."
     )
     st.stop()
 
-# =============================================================================
-#  SIDEBAR
-# =============================================================================
+try:
+    df, eda_df, original_shape, duplicate_count = load_data(
+        str(DATA_FILE), DATA_FILE.stat().st_mtime
+    )
+except Exception as exc:
+    st.error(f"Unable to load or clean the dataset: {exc}")
+    st.stop()
 
-st.sidebar.title("Navigation")
+
+# ------------------------------------------------------------
+# LOAD MODEL OUTPUT FILES CREATED BY data.py
+# ------------------------------------------------------------
+
+results_df = load_optional_csv(EXPERIMENT_FILE)
+cv_df = load_optional_csv(CV_FILE)
+future_df = load_optional_csv(FUTURE_FILE)
+
+
+# ------------------------------------------------------------
+# HEADER
+# ------------------------------------------------------------
+
+st.title("🌍 Life Expectancy Analysis Dashboard")
+st.markdown(
+    "**Dataset:** WHO Life Expectancy (2000–2015)  |  "
+    "**Source:** [Kaggle – WHO Life Expectancy]"
+    "(https://www.kaggle.com/datasets/kumarajarshi/life-expectancy-who)"
+)
+st.caption(
+    "Exploratory data analysis, regression analysis and "
+    "machine-learning classification."
+)
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("Original rows", f"{original_shape[0]:,}")
+m2.metric("Rows after cleaning", f"{len(df):,}")
+m3.metric("Columns", f"{df.shape[1]}")
+m4.metric("Duplicate rows removed", f"{duplicate_count:,}")
+
+st.markdown("---")
+
+
+# ------------------------------------------------------------
+# SIDEBAR NAVIGATION
+# ------------------------------------------------------------
 
 SECTIONS = [
-    "Project Objectives",
+    "Project Overview",
     "Data Preview",
-    "Dataset Info",
+    "Dataset Information",
     "Summary Statistics",
     "Missing Values",
-    "Distribution Analysis",
-    "Outlier Handling",
-    "Correlation Matrix",
-    "GDP vs Life Expectancy",
+    "Life Expectancy Distribution",
+    "Correlation Analysis",
+    "GDP Group Analysis",
     "Developed vs Developing",
-    "Correlation Heatmap",
     "Regression Analysis",
-    "Hypothesis Testing",
+    "Classification Overview",
+    "Model Comparison",
+    "Cross-Validation Results",
+    "Future-Year Validation",
+    "Decision Tree Visualization"
 ]
 
-section = st.sidebar.radio("Go to section:", SECTIONS)
+st.sidebar.title("Navigation")
+section = st.sidebar.radio("Select a section:", SECTIONS)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(
-    f"**After cleaning**  \nShape: `{df.shape[0]} rows × {df.shape[1]} cols`"
-)
-st.sidebar.markdown(
-    f"**IQR Bounds**  \nLower: `{lower_bound:.1f}` &nbsp; Upper: `{upper_bound:.1f}`"
-)
+st.sidebar.markdown("**Dataset after initial cleaning**")
+st.sidebar.write(f"{df.shape[0]:,} rows × {df.shape[1]} columns")
 
 
-# =============================================================================
-#  SECTIONS
-# =============================================================================
+# ------------------------------------------------------------
+# 1. PROJECT OVERVIEW
+# ------------------------------------------------------------
 
-# ─── 1. Project Objectives ────────────────────────────────────────────────────
-if section == "Project Objectives":
-    st.header("Project Objectives")
-
-    objectives = """
-  Objective 1 (Linear Regression):
-    Analyse the impact of Schooling (years of education) on
-    Life Expectancy across countries using simple linear regression.
-    X = Schooling   |   Y = Life expectancy
-
-  Objective 2 (Linear Regression):
-    Examine the impact of Adult Mortality on Life Expectancy
-    using simple linear regression.
-    X = Adult Mortality   |   Y = Life expectancy
-
-  Objective 3 (Visualisation - Bar Plot):
-    Analyse how Life Expectancy varies across different GDP groups
-    to understand the economic influence on health outcomes.
-
-  Objective 4 (Visualisation - Box Plot):
-    Compare the average Life Expectancy between
-    Developed and Developing countries using a bar plot.
-
-  Objective 5 (Visualisation - Heatmap):
-    Identify which numerical health and economic indicators
-    correlate most strongly with Life Expectancy using a
-    correlation heatmap.
-"""
-    st.code(objectives, language=None)
-
-
-# ─── 2. Data Preview ─────────────────────────────────────────────────────────
-elif section == "Data Preview":
-    st.header("Data Preview")
-    st.markdown(f"**Dataset loaded:** `{df.shape}`")
-    st.dataframe(df.head(), use_container_width=True)
-
-
-# ─── 3. Dataset Info ─────────────────────────────────────────────────────────
-elif section == "Dataset Info":
-    st.header("Dataset Info")
-
-    import io
-    buf = io.StringIO()
-    df.info(buf=buf)
-    st.code(buf.getvalue(), language="text")
-
-
-# ─── 4. Summary Statistics ───────────────────────────────────────────────────
-elif section == "Summary Statistics":
-    st.header("Summary Statistics (Numerical Columns)")
-    st.dataframe(df.describe().round(2), use_container_width=True)
-
-
-# ─── 5. Missing Values ───────────────────────────────────────────────────────
-elif section == "Missing Values":
-    st.header("Missing Values")
-
-    # Original raw file — reload without cleaning to show before state
-    df_raw = pd.read_csv("Life Expectancy Data.csv")
-    df_raw.columns = df_raw.columns.str.strip()
-
-    st.subheader("Before Handling")
-    missing_before = df_raw.isnull().sum().reset_index()
-    missing_before.columns = ["Column", "Missing Count"]
-    st.dataframe(missing_before, use_container_width=True)
-
-    st.subheader("After Handling")
-    missing_after = df.isnull().sum().reset_index()
-    missing_after.columns = ["Column", "Missing Count"]
-    st.dataframe(missing_after, use_container_width=True)
-
-    st.markdown("""
-    **Strategy used:**
-    - **LOW missing** → filled with column mean *(Life expectancy, Adult Mortality, BMI, Polio, Diphtheria)*
-    - **MEDIUM missing** → filled with group mean by Status *(Alcohol, Total expenditure, Schooling, Income composition)*
-    - **HIGH missing** → column dropped *(Population)*
-    - **Remaining** → filled with column mean *(GDP, Hepatitis B)*
-    """)
-
-
-# ─── 6. Distribution Analysis ────────────────────────────────────────────────
-elif section == "Distribution Analysis":
-    st.header("Distribution Analysis — Life Expectancy")
-
-    st.markdown(
-        "Histogram and Boxplot to check the distribution shape "
-        "and identify skewness **before outlier handling**."
+if section == "Project Overview":
+    st.header("Project Overview")
+    st.caption("Analysis of WHO country-year data using EDA, regression and classification.")
+    st.write(
+        f"**Dataset snapshot:** {len(df):,} usable rows and {df.shape[1]} columns "
+        f"after initial cleaning. The dashboard starts with {original_shape[0]:,} "
+        f"rows and removed {duplicate_count:,} duplicate rows."
     )
 
-    # 🔥 Load RAW data (before cleaning)
-    df_raw = pd.read_csv("Life Expectancy Data.csv")
-    df_raw.columns = df_raw.columns.str.strip()
+
+    st.subheader("Project Objectives")
+    objectives = [
+        "Inspect and clean the WHO Life Expectancy dataset.",
+        "Explore distributions, missing values and relationships among variables.",
+        "Study the relationship between Schooling and Life expectancy using linear regression.",
+        "Compare life expectancy across GDP groups and country development status.",
+        "Classify life expectancy into Low, Medium and High categories.",
+        "Compare Decision Tree, KNN, Gaussian Naive Bayes and Random Forest.",
+        "Evaluate models using multiple train-test ratios, Macro F1 and group-aware cross-validation.",
+        "Examine performance on the last three available years."
+    ]
+    for item in objectives:
+        st.markdown(f"- {item}")
+
+    st.subheader("Machine-Learning Target Categories")
+    category_table = pd.DataFrame({
+        "Class": ["Low", "Medium", "High"],
+        "Life expectancy range": [
+            "Below 60 years",
+            "60 to below 75 years",
+            "75 years or above"
+        ]
+    })
+    st.dataframe(category_table, hide_index=True, use_container_width=True)
+    st.info(
+        "These class boundaries are project-defined thresholds; "
+        "they are not official WHO categories."
+    )
+
+    st.subheader("Algorithms")
+    st.markdown(
+        "- Decision Tree\n"
+        "- K-Nearest Neighbors (KNN)\n"
+        "- Gaussian Naive Bayes\n"
+        "- Random Forest (200 trees)"
+    )
+
+
+# ------------------------------------------------------------
+# 2. DATA PREVIEW
+# ------------------------------------------------------------
+
+elif section == "Data Preview":
+    st.header("Data Preview")
+    st.caption(
+        "A sample of the cleaned dataset. Each row represents one country in one year."
+    )
+
+    # Compact dataset coverage indicators
+    preview_col1, preview_col2, preview_col3 = st.columns(3)
+    preview_col1.metric("Countries", f"{df['Country'].nunique():,}" if "Country" in df.columns else "N/A")
+    if "Year" in df.columns:
+        preview_col2.metric("Year range", f"{int(df['Year'].min())}–{int(df['Year'].max())}")
+    else:
+        preview_col2.metric("Year range", "N/A")
+    preview_col3.metric("Rows after cleaning", f"{len(df):,}")
+
+    st.info(
+        "Review country names, years, target values and predictor columns for inconsistencies."
+    )
+    st.dataframe(df.head(20), use_container_width=True)
+
+    st.subheader("Column Names")
+    st.write(list(df.columns))
+
+
+# ------------------------------------------------------------
+# 3. DATASET INFORMATION
+# ------------------------------------------------------------
+
+elif section == "Dataset Information":
+    st.header("Dataset Information")
+    st.caption("Dataset dimensions, data types and feature groups.")
+    st.write(
+        f"**Column-type summary:** "
+        f"{len(df.select_dtypes(include=np.number).columns)} numerical columns and "
+        f"{len(df.select_dtypes(exclude=np.number).columns)} categorical columns."
+    )
+
+
+    buffer = io.StringIO()
+    df.info(buf=buffer)
+    st.code(buffer.getvalue(), language="text")
+
+    st.write("**Numerical columns:**")
+    st.write(df.select_dtypes(include=np.number).columns.tolist())
+
+    st.write("**Categorical columns:**")
+    st.write(df.select_dtypes(exclude=np.number).columns.tolist())
+
+
+# ------------------------------------------------------------
+# 4. SUMMARY STATISTICS
+# ------------------------------------------------------------
+
+elif section == "Summary Statistics":
+    st.header("Summary Statistics")
+    st.caption("Descriptive statistics for the EDA dataset.")
+    st.write(
+        f"**Life expectancy in this dataset:** mean "
+        f"{eda_df[TARGET].mean():.2f} years; median "
+        f"{eda_df[TARGET].median():.2f} years; observed range "
+        f"{eda_df[TARGET].min():.2f}–{eda_df[TARGET].max():.2f} years."
+    )
+
+    st.dataframe(
+        eda_df.describe().round(2),
+        use_container_width=True
+    )
+
+
+# ------------------------------------------------------------
+# 5. MISSING VALUES
+# ------------------------------------------------------------
+
+elif section == "Missing Values":
+    st.header("Missing Values")
+    st.caption("Missing-value counts before and after EDA imputation.")
+
+
+    before = df.isnull().sum().rename("Missing Before EDA Imputation")
+    after = eda_df.isnull().sum().rename("Missing After EDA Imputation")
+
+    missing_table = pd.concat([before, after], axis=1).reset_index()
+    missing_table = missing_table.rename(columns={"index": "Column"})
+    st.dataframe(missing_table, use_container_width=True, hide_index=True)
+
+    st.subheader("Missing-Value Treatment")
+    st.markdown(
+        """
+        - Duplicate rows are removed.
+        - Rows with a missing `Life expectancy` target are removed.
+        - Missing numerical values for EDA are filled using the column median.
+        - Missing categorical values for EDA are filled using the column mode.
+        - In the machine-learning pipeline, numerical missing values are
+          imputed using the median and categorical missing values using
+          the most frequent value. These imputers are fitted within the
+          training pipeline.
+        """
+    )
+
+
+# ------------------------------------------------------------
+# 6. LIFE EXPECTANCY DISTRIBUTION
+# ------------------------------------------------------------
+
+elif section == "Life Expectancy Distribution":
+    st.header("Life Expectancy Distribution")
+    st.caption("Distribution and spread of observed life-expectancy values.")
+    st.write(
+        f"**Observed summary:** mean {eda_df[TARGET].mean():.2f} years; "
+        f"median {eda_df[TARGET].median():.2f} years; "
+        f"standard deviation {eda_df[TARGET].std():.2f} years."
+    )
+
 
     col1, col2 = st.columns(2)
 
     with col1:
-        fig, ax = plt.subplots()
-        sns.histplot(df_raw["Life expectancy"], kde=True, ax=ax)
-        ax.set_title("Histogram of Life Expectancy (Before Outliers)")
-        st.pyplot(fig)
-        plt.close(fig)
+        fig, ax = plt.subplots(figsize=(8, 5))
+        sns.histplot(eda_df[TARGET], kde=True, ax=ax)
+        ax.set_title("Distribution of Life Expectancy")
+        ax.set_xlabel("Life expectancy (years)")
+        show_figure(fig)
 
     with col2:
-        fig, ax = plt.subplots()
-        sns.boxplot(x=df_raw["Life expectancy"], ax=ax)
-        ax.set_title("Boxplot of Life Expectancy (Before Outliers)")
-        st.pyplot(fig)
-        plt.close(fig)
+        fig, ax = plt.subplots(figsize=(8, 5))
+        sns.boxplot(x=eda_df[TARGET], ax=ax)
+        ax.set_title("Life Expectancy Boxplot")
+        ax.set_xlabel("Life expectancy (years)")
+        show_figure(fig)
 
-    st.success(
-        "✔ Outliers are clearly visible in the boxplot (points outside whiskers)."
+    st.caption(
+        "These charts use the EDA-cleaned data. The current data.py "
+        "does not apply IQR capping to the life expectancy target."
     )
 
-    st.info(
-        "Data is negatively skewed and contains extreme values → "
-        "outlier handling (IQR capping) is required."
-    )
 
-# ─── 7. Outlier Handling ─────────────────────────────────────────────────────
-elif section == "Outlier Handling":
-    st.header("Outlier Handling using IQR Method")
+# ------------------------------------------------------------
+# 7. CORRELATION ANALYSIS
+# ------------------------------------------------------------
 
-    st.markdown("**Capping** is used instead of removing outliers.")
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Lower Bound", f"{lower_bound:.4f}")
-    col2.metric("Upper Bound", f"{upper_bound:.4f}")
-    col3.metric("Dataset Shape", f"{df.shape[0]} × {df.shape[1]}")
-
-    st.subheader("Boxplot After Outlier Capping")
-    fig, ax = plt.subplots()
-    sns.boxplot(x=df["Life expectancy"], ax=ax)
-    ax.set_title("Boxplot of Life Expectancy")
-    st.pyplot(fig)
-    plt.close(fig)
+elif section == "Correlation Analysis":
+    st.header("Correlation Analysis")
+    st.caption("Linear associations between numerical variables.")
+    corr_for_takeaway = eda_df.select_dtypes(include=np.number).corr()[TARGET].drop(TARGET).dropna()
+    if not corr_for_takeaway.empty:
+        strongest_pos = corr_for_takeaway.idxmax()
+        strongest_neg = corr_for_takeaway.idxmin()
+        st.write(
+            f"**Strongest positive association:** {strongest_pos} "
+            f"(r = {corr_for_takeaway[strongest_pos]:.3f}).  "
+            f"**Strongest negative association:** {strongest_neg} "
+            f"(r = {corr_for_takeaway[strongest_neg]:.3f})."
+        )
 
 
-# ─── 8. Correlation Matrix ───────────────────────────────────────────────────
-elif section == "Correlation Matrix":
-    st.header("Correlation with Life Expectancy")
+    numeric_df = eda_df.select_dtypes(include=np.number)
+    correlation = numeric_df.corr()
 
-    num_df = df.select_dtypes(include=np.number)
-    corr_matrix = num_df.corr()
+    if TARGET in correlation.columns:
+        corr_target = (
+            correlation[TARGET]
+            .drop(TARGET)
+            .sort_values(ascending=False)
+            .rename("Correlation with Life expectancy")
+            .reset_index()
+            .rename(columns={"index": "Feature"})
+        )
 
-    st.subheader("Full Correlation Matrix")
-    st.dataframe(corr_matrix.round(3), use_container_width=True)
+        st.subheader("Correlation with Life Expectancy")
+        st.dataframe(
+            corr_target.round(3),
+            hide_index=True,
+            use_container_width=True
+        )
 
-    st.subheader("Correlation with Life Expectancy (sorted)")
-    corr_with_le = corr_matrix["Life expectancy"].drop("Life expectancy")
-    corr_sorted = corr_with_le.sort_values(ascending=False).round(3)
-
-    corr_df = corr_sorted.reset_index()
-    corr_df.columns = ["Feature", "Correlation"]
-    st.dataframe(corr_df, use_container_width=True)
-
-
-# ─── 9. GDP vs Life Expectancy ────────────────────────────────────────────────
-elif section == "GDP vs Life Expectancy":
-    st.header("Bar Plot — GDP Groups vs Average Life Expectancy")
-    st.markdown(
-        "Objective 3: Analyse how Life Expectancy varies across different "
-        "GDP groups to understand the economic influence on health outcomes."
-    )
-
-    fig, ax = plt.subplots(figsize=(8, 5))
-    sns.barplot(
-        x="GDP_Group",
-        y="Life expectancy",
-        data=df,
-        width=0.5,
-        errorbar=None,
-        ax=ax
-    )
-    ax.set_title("Average Life Expectancy by GDP Groups")
-    ax.set_xlabel("GDP Groups")
-    ax.set_ylabel("Average Life Expectancy")
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-
-    st.markdown("➡ Life expectancy increases with GDP groups")
-    st.markdown("➡ Relationship is positive but not very strong")
-
-
-# ─── 10. Developed vs Developing ─────────────────────────────────────────────
-elif section == "Developed vs Developing":
-    st.header("Box Plot — Life Expectancy by Country Status")
-    st.markdown(
-        "Objective 4: Compare the Life Expectancy distribution between "
-        "Developed and Developing countries."
-    )
-
-    fig, ax = plt.subplots(figsize=(7, 5))
-    sns.boxplot(
-        data=df,
-        x="Status",
-        y="Life expectancy",
-        palette=["#e74c3c", "#2ecc71"],
-        width=0.5,
-        ax=ax
-    )
-    ax.set_title("Life Expectancy Distribution by Country Status")
-    ax.set_xlabel("Country Status")
-    ax.set_ylabel("Life Expectancy")
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-
-    st.markdown("➡ Developed countries show higher median life expectancy")
-    st.markdown("➡ Developing countries show more variability and lower values")
-
-
-# ─── 11. Correlation Heatmap ─────────────────────────────────────────────────
-elif section == "Correlation Heatmap":
-    st.header("Correlation Heatmap — All Numerical Features")
-    st.markdown(
-        "Objective 5: Identify which numerical health and economic indicators "
-        "correlate most strongly with Life Expectancy."
-    )
-
-    num_df = df.select_dtypes(include=np.number)
-
+    st.subheader("Correlation Heatmap")
     fig, ax = plt.subplots(figsize=(14, 10))
     sns.heatmap(
-        num_df.corr(),
+        correlation,
         cmap="coolwarm",
         center=0,
         vmin=-1,
         vmax=1,
         annot=True,
         fmt=".2f",
-        annot_kws={"size": 6},
-        linewidths=0.5,
-        cbar=True,
+        annot_kws={"size": 7},
         ax=ax
     )
-    ax.set_title("Correlation Heatmap (All Numerical Features)")
-    plt.xticks(rotation=45, ha="right", fontsize=8)
-    plt.yticks(rotation=0, fontsize=8)
+    ax.set_title("Correlation Heatmap")
     plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+    show_figure(fig)
 
 
-# ─── 12. Regression Analysis ─────────────────────────────────────────────────
+# ------------------------------------------------------------
+# 8. GDP GROUP ANALYSIS
+# ------------------------------------------------------------
+
+elif section == "GDP Group Analysis":
+    st.header("GDP Groups vs Average Life Expectancy")
+    st.caption("Average life expectancy across five GDP groups.")
+
+
+    if "GDP" not in eda_df.columns:
+        st.warning("GDP column is not available.")
+    else:
+        plot_df = eda_df[["GDP", TARGET]].dropna().copy()
+        try:
+            plot_df["GDP Group"] = pd.qcut(
+                plot_df["GDP"].rank(method="first"),
+                q=5,
+                labels=["Very Low", "Low", "Medium", "High", "Very High"]
+            )
+
+            summary = (
+                plot_df.groupby("GDP Group", observed=False)[TARGET]
+                .mean()
+                .reset_index()
+            )
+            st.dataframe(
+                summary.rename(columns={TARGET: "Average Life expectancy"})
+                .round(2),
+                hide_index=True,
+                use_container_width=True
+            )
+
+            if not summary.empty:
+                highest_group = summary.loc[summary[TARGET].idxmax()]
+                lowest_group = summary.loc[summary[TARGET].idxmin()]
+                difference = highest_group[TARGET] - lowest_group[TARGET]
+                st.info(
+                    f"**Result from this dataset:** the {highest_group['GDP Group']} "
+                    f"GDP group has the highest average life expectancy "
+                    f"({highest_group[TARGET]:.2f} years), while the "
+                    f"{lowest_group['GDP Group']} group has the lowest "
+                    f"({lowest_group[TARGET]:.2f} years). The difference is "
+                    f"{difference:.2f} years. This is an association, not a causal effect."
+                )
+
+            fig, ax = plt.subplots(figsize=(9, 5))
+            sns.barplot(
+                data=plot_df,
+                x="GDP Group",
+                y=TARGET,
+                errorbar=None,
+                ax=ax
+            )
+            ax.set_title("Average Life Expectancy by GDP Group")
+            ax.set_xlabel("GDP Group")
+            ax.set_ylabel("Average Life expectancy (years)")
+            show_figure(fig)
+        except Exception as exc:
+            st.warning(f"Could not create GDP groups: {exc}")
+
+
+# ------------------------------------------------------------
+# 9. DEVELOPED VS DEVELOPING
+# ------------------------------------------------------------
+
+elif section == "Developed vs Developing":
+    st.header("Life Expectancy by Country Status")
+    st.caption("Comparison of life-expectancy distributions by development status.")
+
+
+    if "Status" not in eda_df.columns:
+        st.warning("Status column is not available.")
+    else:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        sns.boxplot(
+            data=eda_df,
+            x="Status",
+            y=TARGET,
+            ax=ax
+        )
+        ax.set_title("Life Expectancy by Country Status")
+        ax.set_xlabel("Country Status")
+        ax.set_ylabel("Life expectancy (years)")
+        show_figure(fig)
+
+        status_summary = (
+            eda_df.groupby("Status")[TARGET]
+            .agg(["count", "mean", "median", "std"])
+            .round(2)
+            .reset_index()
+        )
+        st.subheader("Summary by Status")
+        st.dataframe(status_summary, hide_index=True, use_container_width=True)
+
+        if {"Developed", "Developing"}.issubset(set(status_summary["Status"].astype(str))):
+            means = status_summary.set_index("Status")["mean"]
+            gap = means["Developed"] - means["Developing"]
+            st.info(
+                f"**Result from this dataset:** average life expectancy is "
+                f"{means['Developed']:.2f} years for Developed observations and "
+                f"{means['Developing']:.2f} years for Developing observations "
+                f"(difference: {gap:.2f} years). This describes the observed "
+                f"groups and does not establish causation."
+            )
+
+
+# ------------------------------------------------------------
+# 10. REGRESSION ANALYSIS — MATCHES CURRENT data.py
+# ------------------------------------------------------------
+
 elif section == "Regression Analysis":
-    st.header("Simple Linear Regression")
+    st.header("Schooling vs Life Expectancy")
+    st.caption("Linear regression using Schooling to estimate life expectancy.")
 
-    # ── Exact regression_model() function from original code ─────────────────
-    def regression_model(x_col, display_name=None):
-        display_name = display_name or x_col
 
-        data = df[[x_col, "Life expectancy"]].dropna()
-        X = data[[x_col]].values
-        y = data["Life expectancy"].values
+    if "Schooling" not in df.columns or "Country" not in df.columns:
+        st.warning("Required columns are not available.")
+    else:
+        regression_data = df[["Schooling", TARGET, "Country"]].dropna().copy()
+        X_reg = regression_data[["Schooling"]]
+        y_reg = regression_data[TARGET]
+        groups_reg = regression_data["Country"]
+
+        splitter = GroupShuffleSplit(
+            n_splits=1,
+            test_size=0.20,
+            random_state=42
+        )
+        train_idx, test_idx = next(
+            splitter.split(X_reg, y_reg, groups=groups_reg)
+        )
+
+        X_train = X_reg.iloc[train_idx]
+        X_test = X_reg.iloc[test_idx]
+        y_train = y_reg.iloc[train_idx]
+        y_test = y_reg.iloc[test_idx]
 
         model = LinearRegression()
-        model.fit(X, y)
-        y_pred = model.predict(X)
+        model.fit(X_train, y_train)
+        prediction = model.predict(X_test)
 
-        r2   = r2_score(y, y_pred)
-        rmse = np.sqrt(mean_squared_error(y, y_pred))
+        r2 = r2_score(y_test, prediction)
+        rmse = np.sqrt(mean_squared_error(y_test, prediction))
 
-        # Print block — shown as a code block in Streamlit
-        result_text = (
-            f"\n{display_name} → Life Expectancy\n"
-            f"{'-'*40}\n"
-            f"Slope:     {round(model.coef_[0], 4)}\n"
-            f"Intercept: {round(model.intercept_, 4)}\n"
-            f"R²:        {round(r2, 4)}\n"
-            f"RMSE:      {round(rmse, 4)}"
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Slope", f"{model.coef_[0]:.4f}")
+        c2.metric("Intercept", f"{model.intercept_:.4f}")
+        c3.metric("Test R²", f"{r2:.4f}")
+        c4.metric("Test RMSE", f"{rmse:.4f}")
+
+        st.write(
+            f"Training rows: **{len(X_train):,}**  |  "
+            f"Testing rows: **{len(X_test):,}**"
         )
-        st.code(result_text, language="text")
+        st.write(
+            "Countries appearing in both sets: **"
+            f"{len(set(groups_reg.iloc[train_idx]).intersection(set(groups_reg.iloc[test_idx])))}**"
+        )
 
-        # Plot — identical to original
-        x_sorted = np.sort(X, axis=0)
+        order = np.argsort(X_test["Schooling"].values)
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.scatter(
+            X_test["Schooling"],
+            y_test,
+            alpha=0.4,
+            label="Actual test observations"
+        )
+        ax.plot(
+            X_test["Schooling"].values[order],
+            prediction[order],
+            color="red",
+            label="Regression predictions"
+        )
+        ax.set_title("Schooling vs Life Expectancy — Test Set")
+        ax.set_xlabel("Schooling (years)")
+        ax.set_ylabel("Life expectancy (years)")
+        ax.legend()
+        show_figure(fig)
 
-        fig, ax = plt.subplots(figsize=(7, 5))
-        ax.scatter(X, y, alpha=0.3)
-        ax.plot(x_sorted, model.predict(x_sorted), color="red")
-        ax.set_title(f"{display_name} vs Life Expectancy")
-        ax.set_xlabel(display_name)
-        ax.set_ylabel("Life Expectancy")
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        st.caption(
+            "The regression results are recalculated in this dashboard "
+            "using the same country-grouped 80:20 split as data.py."
+        )
 
-        return model.coef_[0]
 
-    # Model 1 — Schooling
-    st.subheader("Model 1 — Schooling → Life Expectancy")
-    st.caption("Objective 1: Analyse the impact of Schooling on Life Expectancy.")
-    s1 = regression_model("Schooling", "Schooling")
+# ------------------------------------------------------------
+# 11. CLASSIFICATION OVERVIEW
+# ------------------------------------------------------------
+
+elif section == "Classification Overview":
+    st.header("Machine-Learning Classification")
+    st.caption("Classification of life expectancy into three project-defined categories.")
+    class_counts = pd.cut(
+        df[TARGET], bins=[-np.inf, 60, 75, np.inf],
+        labels=["Low", "Medium", "High"], right=False
+    ).value_counts().reindex(["Low", "Medium", "High"], fill_value=0)
+    st.write("**Observed class distribution in the cleaned dataset:**")
+    st.dataframe(
+        pd.DataFrame({
+            "Class": class_counts.index.astype(str),
+            "Observations": class_counts.values,
+            "Share (%)": (class_counts.values / class_counts.sum() * 100).round(2)
+        }),
+        hide_index=True,
+        use_container_width=True
+    )
+
+
+    st.subheader("Target Classes")
+    class_df = pd.DataFrame({
+        "Class": CLASS_LABELS,
+        "Definition": [
+            "Life expectancy < 60",
+            "60 ≤ Life expectancy < 75",
+            "Life expectancy ≥ 75"
+        ]
+    })
+    st.dataframe(class_df, hide_index=True, use_container_width=True)
+
+    st.subheader("Input Features")
+    excluded = [TARGET, "Life Expectancy Class", "Country"]
+    feature_columns = [
+        col for col in df.columns if col not in excluded
+    ]
+
+    st.metric("Original input attributes", len(feature_columns))
+    st.write(feature_columns)
+
     st.markdown(
-        f"➡ 1 year increase in schooling → **{s1:.2f} years** increase in life expectancy"
+        """
+        **Country** is excluded from the model input features and retained
+        separately for group-based splitting. The original numerical
+        `Life expectancy` column is removed from the inputs because it is
+        used to create the classification target.
+        """
     )
 
-    st.markdown("---")
+    st.subheader("Algorithms")
+    algo_table = pd.DataFrame({
+        "Algorithm": [
+            "Decision Tree",
+            "K-Nearest Neighbors (KNN)",
+            "Gaussian Naive Bayes",
+            "Random Forest"
+        ],
+        "Main idea": [
+            "Uses feature-based decision rules.",
+            "Predicts from the majority class among the nearest 5 observations.",
+            "Uses Bayes' theorem with a Gaussian feature assumption.",
+            "Combines 200 decision trees using ensemble learning."
+        ]
+    })
+    st.dataframe(algo_table, hide_index=True, use_container_width=True)
 
-    # Model 2 — Adult Mortality
-    st.subheader("Model 2 — Adult Mortality → Life Expectancy")
-    st.caption("Objective 2: Examine the impact of Adult Mortality on Life Expectancy.")
-    s2 = regression_model("Adult Mortality", "Adult Mortality")
-    st.markdown(
-        f"➡ Increase in adult mortality → **{s2:.2f}** decrease in life expectancy"
+    st.subheader("Train-Test Experiments")
+    st.dataframe(
+        pd.DataFrame({
+            "Split": ["80:20", "70:30", "75:25"],
+            "Test size parameter": [0.20, 0.30, 0.25]
+        }),
+        hide_index=True,
+        use_container_width=True
+    )
+
+    st.info(
+        "GroupShuffleSplit selects groups (countries), so the actual "
+        "percentage of rows in the test set may differ from the requested "
+        "test_size percentage."
     )
 
 
-# ─── 13. Hypothesis Testing ───────────────────────────────────────────────────
-elif section == "Hypothesis Testing":
-    st.header("Hypothesis Testing")
-    st.markdown("""
-    **H₀:** No significant difference in Life Expectancy between Developed and Developing countries.  
-    **H₁:** Developed countries have significantly higher Life Expectancy.  
-    **Test:** Welch's Independent T-Test &nbsp;|&nbsp; **α = 0.05** &nbsp;|&nbsp; One-tailed
-    """)
+# ------------------------------------------------------------
+# 12. MODEL COMPARISON
+# ------------------------------------------------------------
 
-    developed  = df[df["Status"] == "Developed"]["Life expectancy"]
-    developing = df[df["Status"] == "Developing"]["Life expectancy"]
+elif section == "Model Comparison":
+    st.header("Final Model Comparison")
+    st.caption("Comparison of four classifiers across three country-grouped splits.")
 
-    t_stat, p_val = stats.ttest_ind(
-        developed, developing,
-        equal_var=False,
-        alternative="greater"
-    )
 
-    # Results — same as original print block
-    result_text = (
-        f"Mean Developed:  {round(developed.mean(), 2)}\n"
-        f"Mean Developing: {round(developing.mean(), 2)}\n"
-        f"T-stat:          {round(t_stat, 4)}\n"
-        f"P-value:         {p_val}"
-    )
-    st.code(result_text, language="text")
-
-    if p_val < 0.05:
-        st.success("Reject H₀ → Developed countries have higher life expectancy")
+    if results_df.empty:
+        st.warning(
+            "Model results were not found. Run data.py first to generate "
+            "`ml_experiment_results.csv`, then refresh this dashboard."
+        )
     else:
-        st.warning("Fail to reject H₀")
+        required = {"Model", "Split", "Accuracy", "Macro Precision",
+                    "Macro Recall", "Macro F1"}
+        if not required.issubset(results_df.columns):
+            st.error(
+                "The experiment results CSV does not contain the expected "
+                "columns. Regenerate it by running the current data.py."
+            )
+        else:
+            st.subheader("Results Across All Train-Test Splits")
+            st.dataframe(
+                results_df.round(4),
+                hide_index=True,
+                use_container_width=True
+            )
 
-    st.markdown("---")
+            st.subheader("Macro F1 Comparison by Split")
+            fig, ax = plt.subplots(figsize=(11, 6))
+            sns.barplot(
+                data=results_df,
+                x="Model",
+                y="Macro F1",
+                hue="Split",
+                errorbar=None,
+                ax=ax
+            )
+            ax.set_title("Macro F1 Comparison — Models and Splits")
+            ax.set_ylabel("Macro F1-score")
+            ax.set_ylim(0, 1)
+            ax.tick_params(axis="x", rotation=20)
+            ax.legend(title="Train-Test Split")
+            plt.tight_layout()
+            show_figure(fig)
 
-    # Bar chart — identical to original
-    st.subheader("Life Expectancy Comparison — Bar Chart")
+            st.subheader("Average Model Performance")
+            metrics = [
+                "Accuracy", "Macro Precision", "Macro Recall", "Macro F1"
+            ]
+            model_summary = (
+                results_df.groupby("Model")[metrics]
+                .mean()
+                .sort_values("Macro F1", ascending=False)
+            )
+            st.dataframe(
+                model_summary.round(4),
+                use_container_width=True
+            )
 
-    means  = [developed.mean(), developing.mean()]
-    labels = ["Developed", "Developing"]
+            winner = model_summary.index[0]
+            best_f1 = model_summary.iloc[0]["Macro F1"]
+            best_accuracy = model_summary.loc[winner, "Accuracy"]
 
-    fig, ax = plt.subplots()
-    bars = ax.bar(labels, means, width=0.4)
+            st.success(
+                f"Best model by average Macro F1: **{winner}** "
+                f"(Macro F1 = {best_f1:.4f})"
+            )
+            st.metric("Winner's average accuracy", f"{best_accuracy:.4f}")
 
-    for bar, val in zip(bars, means):
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height() + 0.5,
-            f"{val:.1f}",
-            ha="center"
+            st.caption(
+                "The winner is selected using the average Macro F1 across "
+                "the three country-grouped experiments. Check the separate "
+                "future-year validation results as well."
+            )
+
+
+# ------------------------------------------------------------
+# 13. CROSS-VALIDATION RESULTS
+# ------------------------------------------------------------
+
+elif section == "Cross-Validation Results":
+    st.header("Group-Aware Five-Fold Cross-Validation")
+    st.caption("Model consistency across country-grouped validation folds.")
+
+
+    if cv_df.empty:
+        st.warning(
+            "Cross-validation results were not found. Run data.py first "
+            "to generate `ml_cross_validation_results.csv`."
+        )
+    else:
+        st.dataframe(
+            cv_df.round(4),
+            hide_index=True,
+            use_container_width=True
         )
 
-    ax.set_title("Life Expectancy Comparison")
-    ax.set_ylabel("Life Expectancy")
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
+        if {"Model", "Mean CV Macro F1"}.issubset(cv_df.columns) and not cv_df.empty:
+            best_cv = cv_df.groupby("Model")["Mean CV Macro F1"].mean().sort_values(ascending=False)
+            st.info(
+                f"**Result from these folds:** {best_cv.index[0]} has the highest "
+                f"average cross-validation Macro F1 ({best_cv.iloc[0]:.4f}) "
+                f"among the models listed. Compare the fold-level values as well "
+                f"to judge consistency."
+            )
+
+        if {"Model", "Split", "Mean CV Macro F1"}.issubset(cv_df.columns):
+            fig, ax = plt.subplots(figsize=(10, 5))
+            sns.barplot(
+                data=cv_df,
+                x="Model",
+                y="Mean CV Macro F1",
+                hue="Split",
+                errorbar=None,
+                ax=ax
+            )
+            ax.set_title("Cross-Validation Mean Macro F1")
+            ax.set_ylim(0, 1)
+            ax.tick_params(axis="x", rotation=20)
+            plt.tight_layout()
+            show_figure(fig)
+
+        st.caption(
+            "The current data.py uses StratifiedGroupKFold. The number of "
+            "folds can be lower than five when the training data has too "
+            "few observations in its smallest class or too few countries."
+        )
+
+
+# ------------------------------------------------------------
+# 14. FUTURE-YEAR VALIDATION
+# ------------------------------------------------------------
+
+elif section == "Future-Year Validation":
+    st.header("Future-Year Validation")
+    st.caption("Evaluation on the last three available years.")
+
+
+    if future_df.empty:
+        st.warning(
+            "Future-year results were not found. Run data.py first to "
+            "generate `future_year_results.csv`."
+        )
+    else:
+        st.dataframe(
+            future_df.round(4),
+            hide_index=True,
+            use_container_width=True
+        )
+
+        if {"Model", "Macro F1"}.issubset(future_df.columns) and not future_df.empty:
+            best_future = future_df.loc[future_df["Macro F1"].idxmax()]
+            st.info(
+                f"**Result on the held-out later years:** {best_future['Model']} "
+                f"has the highest Macro F1 ({best_future['Macro F1']:.4f}) "
+                f"among the models shown. This identifies the strongest result "
+                f"for this particular time-based test."
+            )
+
+        if {"Model", "Macro F1"}.issubset(future_df.columns):
+            fig, ax = plt.subplots(figsize=(9, 5))
+            sns.barplot(
+                data=future_df,
+                x="Model",
+                y="Macro F1",
+                errorbar=None,
+                ax=ax
+            )
+            ax.set_title("Future-Year Validation — Macro F1")
+            ax.set_ylim(0, 1)
+            ax.tick_params(axis="x", rotation=20)
+            plt.tight_layout()
+            show_figure(fig)
+
+        st.caption(
+            "This is a time-based evaluation. It is separate from the "
+            "country-grouped train-test experiments."
+        )
+
+
+# ------------------------------------------------------------
+# 15. DECISION TREE VISUALIZATION
+# ------------------------------------------------------------
+
+elif section == "Decision Tree Visualization":
+    st.header("Decision Tree Visualization")
+    st.caption("First three levels of a separately trained decision tree.")
+
+
+    if TREE_IMAGE.exists():
+        st.image(
+            str(TREE_IMAGE),
+            caption="Decision Tree — first three levels",
+            use_container_width=True
+        )
+        st.caption(
+            "This visualization is generated by data.py using a separately "
+            "trained Decision Tree on the country-grouped 80:20 training "
+            "partition. It displays the first three levels for readability."
+        )
+    else:
+        st.warning(
+            "`decision_tree_visualization.png` was not found. Run data.py "
+            "first; it saves this image in the project folder."
+        )
+
+
+# ------------------------------------------------------------
+# FOOTER
+# ------------------------------------------------------------
+
+st.markdown("---")
+st.caption(
+    "Life Expectancy Analysis Dashboard | Built with Python, "
+    "Pandas, Scikit-learn, Matplotlib, Seaborn and Streamlit."
+)
