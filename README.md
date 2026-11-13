@@ -172,7 +172,11 @@ The following values are read from the committed CSV result artifacts. The first
 
 **Random Forest is the best-performing model by macro F1** in the stored grouped experiments, cross-validation, and latest-three-year results. Its ensemble combines many decision trees, which can capture feature interactions and reduce the variability of a single tree. That is a plausible explanation for the observed ranking, not a causal finding. The stored results show the performance; they do not provide per-class metrics or uncertainty intervals.
 
-The current script displays a macro-F1 comparison chart interactively, but does not save it as a repository image. The tables above are generated from `ml_experiment_results.csv`, `ml_cross_validation_results.csv`, and `future_year_results.csv`.
+The grouped holdout comparison is shown in the chart below. `data.py` saves this figure as `model_comparison.png`; the tables above are generated from `ml_experiment_results.csv`, `ml_cross_validation_results.csv`, and `future_year_results.csv`.
+
+![Macro F1 comparison of the four classifiers across country-grouped train-test splits](model_comparison.png)
+
+*Each bar shows a model's macro F1 on one of the three grouped holdout experiments. Higher values indicate a better balance of precision and recall across the Low, Medium, and High classes.*
 
 ## Visualizations
 
@@ -210,6 +214,7 @@ The project does not produce future life-expectancy values or deploy a forecasti
 ├── ml_experiment_results.csv         # Grouped holdout metrics
 ├── ml_cross_validation_results.csv   # Group cross-validation metrics
 ├── future_year_results.csv           # Latest-three-year holdout metrics
+├── model_comparison.png              # Macro F1 by model and grouped split
 ├── decision_tree_visualization.png   # Decision-tree plot from data.py
 └── images/                            # Existing EDA and analysis plots
 ```
@@ -239,7 +244,7 @@ Run the full analysis and regenerate the model result files:
 python data.py
 ```
 
-`data.py` opens Matplotlib figures during execution and writes `ml_experiment_results.csv`, `ml_cross_validation_results.csv`, `future_year_results.csv`, and `decision_tree_visualization.png` to the current working directory (the future-year CSV is written when that validation is available).
+`data.py` opens Matplotlib figures during execution and writes `ml_experiment_results.csv`, `ml_cross_validation_results.csv`, `future_year_results.csv`, `model_comparison.png`, and `decision_tree_visualization.png` to the current working directory (the future-year CSV is written when that validation is available).
 
 Launch the dashboard in a separate terminal:
 

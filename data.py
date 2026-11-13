@@ -801,6 +801,11 @@ plt.ylabel("Macro F1 Score")
 plt.ylim(0, 1)
 plt.xticks(rotation=20)
 plt.tight_layout()
+plt.savefig(
+    "model_comparison.png",
+    dpi=300,
+    bbox_inches="tight"
+)
 plt.show()
 
 # Average model performance
